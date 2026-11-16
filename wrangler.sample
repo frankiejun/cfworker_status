@@ -1,0 +1,52 @@
+// ============================================================
+// cfworker-status 部署配置模板
+//
+// 用法:
+//   cp wrangler.sample wrangler.jsonc
+//
+// 然后把下面 kv_namespaces[0].id 换成你自己的 KV namespace id。
+// 生成方法见 README「部署」第 1 步。
+//
+// 注意:wrangler.jsonc 已被 .gitignore 忽略 —— 它含有你自己的资源 ID,
+// 而开源仓库里只保留这份模板。
+// ============================================================
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cfworker-status",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+
+  // 前端静态资源。run_worker_first 必须保留,否则 SPA fallback 会把 /api/*
+  // 也当成前端路由,接口全部失效。
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+
+  "kv_namespaces": [
+    {
+      "binding": "STATUS_KV",
+      // ↓↓↓ 换成你自己的
+      "id": "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+    }
+  ],
+
+  // 面板自己的 Worker 名。它的 CPU 会像其它脚本一样出现在统计里,但监控工具
+  // 给自己报警没有意义(登录走 PBKDF2,p99 远超默认阈值),所以在告警里豁免。
+  // 如果你改了上面的 "name",这里要一起改。
+  "vars": {
+    "SELF_SCRIPT_NAME": "cfworker-status"
+  },
+
+  // 采集频率。注意 KV 免费版每天只有 1000 次写入,不要调到 2 分钟以下,
+  // 详见 README「别把间隔调太短」。
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
+
+  "observability": {
+    "enabled": true
+  }
+}
