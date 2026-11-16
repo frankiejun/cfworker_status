@@ -4,6 +4,7 @@ import {
   secondsUntilUtcMidnight,
   splitDomainKey,
   startOfUtcDaySeconds,
+  type AlertState,
 } from "./store";
 import { FREE_PLAN_DAILY } from "./types";
 import type {
@@ -217,8 +218,12 @@ export async function evaluateAlerts(env: Env, config: Config, snapshots: Snapsh
       if (failures.length === 0) remember(account.id, "cpu");
     }
 
-    // 3) D1 / KV / Workers AI 的免费额度,每项一个独立阈值
-    await checkPlatformQuotas(env, config, account, snapshot);
+    // 3) D1 / KV / Workers AI 的免费额度,每项一个独立阈值。
+    // 传入同一份 state 就地修改,由本函数末尾统一写回 —— 不能让它自己
+    // 再 get/saveAlertState,否则会用一份旧快照整体覆盖,把别的键冲掉。
+    await checkPlatformQuotas(config, account, snapshot, state, () => {
+      changed = true;
+    });
   }
 
   // At most one write per cycle however many alerts fired — see the note on
@@ -235,18 +240,28 @@ export async function evaluateAlerts(env: Env, config: Config, snapshots: Snapsh
  *
  * 去重状态复用同一个 `alerts` key,键名带 `pq:` 前缀以示区分,不会和现有的
  * `<accountId>:quota` / `<accountId>:cpu` 撞车。
+ *
+ * 注意:`state` 由调用方传入并就地修改,本函数**不再**自己读写 KV。早先的实现
+ * 在这里独立 `getAlertState`/`saveAlertState`,结果它写入的 `pq:` 键会被外层
+ * 结束时用一份更早读出的快照整体覆盖而丢失,导致平台额度告警每轮 cron 都重发
+ * (等于"每天一次"的设置完全失效)。现在统一由 `evaluateAlerts` 末尾一次写回。
  */
 async function checkPlatformQuotas(
-  env: Env,
   config: Config,
   account: AccountConfig,
   snapshot: Snapshot,
+  state: AlertState,
+  markChanged: () => void,
 ): Promise<void> {
   const quotas = snapshot.quotas;
   if (!quotas) return;
 
   const thresholds = config.thresholds;
   const storageOn = thresholds.storageAlertsEnabled;
+
+  // 与 evaluateAlerts 一致:去重一律用「Unix 秒」。此前这里存的是毫秒级的
+  // todayUtc,和别处的秒混用,虽然各自比较不出错,但容易在后续维护里踩坑。
+  const nowSec = Math.floor(Date.now() / 1000);
 
   /**
    * 每项自带阈值和它对应的键。`threshold` 直接取值而不是用字符串索引 Thresholds,
@@ -261,10 +276,6 @@ async function checkPlatformQuotas(
     { key: "aiNeurons", label: "Workers AI", threshold: thresholds.aiNeuronsPercent, used: quotas.aiNeurons, limit: FREE_PLAN_DAILY.aiNeurons, format: formatNeurons },
   ];
 
-  const state = await getAlertState(env);
-  const now = new Date();
-  const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-
   for (const item of items) {
     if (!Number.isFinite(item.threshold) || item.limit <= 0) continue;
     // 存储类是 gauge,默认不告警(见 storageAlertsEnabled 的说明)
@@ -273,8 +284,9 @@ async function checkPlatformQuotas(
     const percent = (item.used / item.limit) * 100;
     if (percent < item.threshold) continue;
 
+    // 每账号每项每天最多一条:同一天 UTC 内已发过就跳过。
     const stateKey = `pq:${account.id}:${item.key}`;
-    if (state[stateKey] === todayUtc) continue;
+    if (state[stateKey] !== undefined && state[stateKey] >= startOfUtcDaySeconds()) continue;
 
     const content = [
       `账号:${account.name}`,
@@ -286,8 +298,8 @@ async function checkPlatformQuotas(
 
     const failures = await dispatch(config, `⚠️ ${account.name} ${item.label}额度预警`, content);
     if (failures.length === 0) {
-      state[stateKey] = todayUtc;
-      await saveAlertState(env, state);
+      state[stateKey] = nowSec;
+      markChanged();
     }
   }
 }
