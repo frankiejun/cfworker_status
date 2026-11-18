@@ -80,6 +80,8 @@ export const FREE_PLAN_DAILY = {
 export interface Thresholds {
   /** Workers + Pages 请求数达到配额百分比时告警。 */
   workersQuotaPercent: number;
+  /** Whether CPU p99 threshold crossings send notifications. */
+  cpuAlertsEnabled: boolean;
   /** Alert when any script's CPU p99 reaches this many milliseconds. */
   cpuP99Ms: number;
   /** How many days before a domain's expiry date the reminder fires. */

@@ -16,7 +16,7 @@ const state = {
   needsSetup: false,
   authError: "",
   accounts: [],
-  thresholds: { workersQuotaPercent: 80, cpuP99Ms: 8, domainExpiryDays: 30 },
+  thresholds: { workersQuotaPercent: 80, cpuAlertsEnabled: true, cpuP99Ms: 8, domainExpiryDays: 30 },
   selectedAccountId: null,
   config: null,
   configTab: "accounts",
@@ -860,6 +860,7 @@ function panelThresholds() {
         <h3>CPU p99 告警</h3>
         <span class="hint">任一脚本的 CPU p99 达到阈值时推送</span>
       </div>
+      <label class="switch"><input type="checkbox" data-path="thresholds.cpuAlertsEnabled"${state.config.thresholds.cpuAlertsEnabled ? " checked" : ""} /><span>启用 CPU p99 告警</span></label>
       <div class="field-row">
         <div class="field">
           <label>CPU p99 阈值<span class="hint">毫秒</span></label>

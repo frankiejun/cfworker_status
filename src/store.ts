@@ -15,6 +15,7 @@ export function defaultConfig(): Config {
     },
     thresholds: {
       workersQuotaPercent: 80,
+      cpuAlertsEnabled: true,
       cpuP99Ms: 8,
       domainExpiryDays: 30,
       cpuAlertMode: "daily",
@@ -74,6 +75,7 @@ export async function getConfig(env: Env): Promise<Config> {
     // back in would keep serving a key the rest of the code no longer reads.
     thresholds: {
       workersQuotaPercent: numberOr(workersQuotaPercent, base.thresholds.workersQuotaPercent),
+      cpuAlertsEnabled: rawThresholds.cpuAlertsEnabled !== false,
       cpuP99Ms: numberOr(rawThresholds.cpuP99Ms, base.thresholds.cpuP99Ms),
       domainExpiryDays: numberOr(rawThresholds.domainExpiryDays, base.thresholds.domainExpiryDays),
       cpuAlertMode: rawThresholds.cpuAlertMode === "cooldown" ? "cooldown" : "daily",

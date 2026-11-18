@@ -97,6 +97,21 @@ test("182,100 单次尖峰及恢复到 36,553 均不告警,后续持续越线正
   assert.equal(h.messages.length, 1);
 });
 
+test("关闭 CPU p99 告警后不发送通知,其他采集数据不受影响", async (t) => {
+  const h = setup(t);
+  h.config.thresholds.cpuAlertsEnabled = false;
+  const current = snapshot();
+  current.scripts = [{
+    scriptName: "hot-worker", kind: "worker", requests: 10, errors: 0, subrequests: 0,
+    cpuUs: 100_000, p50Us: 1_000, p99Us: 9_000, p999Us: 12_000,
+  }];
+
+  await evaluate(h, current);
+
+  assert.equal(h.messages.length, 0);
+  assert.deepEqual(h.writes, []);
+});
+
 test("第一次越线和缺少前一轮快照不告警", async (t) => {
   const h = setup(t);
   await evaluate(h, snapshot(90_000));

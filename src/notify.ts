@@ -193,34 +193,36 @@ export async function evaluateAlerts(
     }
 
     // 2) CPU p99 approaching the runtime limit
-    const self = env.SELF_SCRIPT_NAME?.trim();
-    const hot = snapshot.scripts.filter((script) => {
-      // `__unknown__` is Cloudflare's sentinel for a script name it could not
-      // resolve yet: a freshly deployed Worker carries it for an hour or two,
-      // then the name is backfilled retroactively. Alerting on that is noise.
-      if (script.scriptName === "__unknown__") return false;
-      // The panel itself is not what we are monitoring — its own login does
-      // PBKDF2, so its p99 sits far above the default threshold.
-      if (self && script.scriptName === self) return false;
-      return script.p99Us !== null && script.p99Us / 1000 >= config.thresholds.cpuP99Ms;
-    });
-
-    if (hot.length > 0 && !alreadySent(account.id, "cpu", cpuWindow)) {
-      const lines = hot.slice(0, 5).map((script) => {
-        const p99 = (script.p99Us! / 1000).toFixed(2);
-        const p999 = script.p999Us !== null ? `,p999 ${(script.p999Us / 1000).toFixed(2)}ms` : "";
-        return `• ${script.scriptName} [${script.kind}]: p99 ${p99}ms${p999},请求 ${formatNumber(script.requests)}`;
+    if (config.thresholds.cpuAlertsEnabled) {
+      const self = env.SELF_SCRIPT_NAME?.trim();
+      const hot = snapshot.scripts.filter((script) => {
+        // `__unknown__` is Cloudflare's sentinel for a script name it could not
+        // resolve yet: a freshly deployed Worker carries it for an hour or two,
+        // then the name is backfilled retroactively. Alerting on that is noise.
+        if (script.scriptName === "__unknown__") return false;
+        // The panel itself is not what we are monitoring — its own login does
+        // PBKDF2, so its p99 sits far above the default threshold.
+        if (self && script.scriptName === self) return false;
+        return script.p99Us !== null && script.p99Us / 1000 >= config.thresholds.cpuP99Ms;
       });
-      if (hot.length > 5) lines.push(`…另有 ${hot.length - 5} 个脚本`);
 
-      const content = [
-        `账号:${account.name}`,
-        `以下脚本 CPU p99 已达到 ${config.thresholds.cpuP99Ms}ms(Free 计划单次上限 10ms):`,
-        ...lines,
-      ].join("\n");
+      if (hot.length > 0 && !alreadySent(account.id, "cpu", cpuWindow)) {
+        const lines = hot.slice(0, 5).map((script) => {
+          const p99 = (script.p99Us! / 1000).toFixed(2);
+          const p999 = script.p999Us !== null ? `,p999 ${(script.p999Us / 1000).toFixed(2)}ms` : "";
+          return `• ${script.scriptName} [${script.kind}]: p99 ${p99}ms${p999},请求 ${formatNumber(script.requests)}`;
+        });
+        if (hot.length > 5) lines.push(`…另有 ${hot.length - 5} 个脚本`);
 
-      const failures = await dispatch(config, `🔥 ${account.name} CPU 预警`, content);
-      if (failures.length === 0) remember(account.id, "cpu");
+        const content = [
+          `账号:${account.name}`,
+          `以下脚本 CPU p99 已达到 ${config.thresholds.cpuP99Ms}ms(Free 计划单次上限 10ms):`,
+          ...lines,
+        ].join("\n");
+
+        const failures = await dispatch(config, `🔥 ${account.name} CPU 预警`, content);
+        if (failures.length === 0) remember(account.id, "cpu");
+      }
     }
 
     // 3) D1 / KV / Workers AI 的免费额度,每项一个独立阈值。

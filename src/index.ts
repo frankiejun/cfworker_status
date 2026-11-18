@@ -469,6 +469,9 @@ function mergeThresholds(existing: Thresholds, incoming: unknown): Thresholds {
     workersQuotaPercent: Number.isFinite(workersQuotaPercent)
       ? Math.min(100, Math.max(1, workersQuotaPercent))
       : existing.workersQuotaPercent,
+    cpuAlertsEnabled: source.cpuAlertsEnabled === undefined
+      ? existing.cpuAlertsEnabled
+      : source.cpuAlertsEnabled === true,
     cpuP99Ms: Number.isFinite(cpuP99Ms) ? Math.min(30000, Math.max(0.1, cpuP99Ms)) : existing.cpuP99Ms,
     // A year ahead is already far past any useful reminder; the lower bound keeps
     // "0 days before" from meaning "only on the day itself, after it may be too late".
