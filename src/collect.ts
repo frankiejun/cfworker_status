@@ -4,7 +4,7 @@ import { fetchPagesScriptNames } from "./cfpages";
 import { fetchWorkerScriptNames } from "./cfscripts";
 import { fetchZones } from "./cfzones";
 import { evaluateAlerts, evaluateDomainExpiry } from "./notify";
-import { getConfig, saveSnapshots } from "./store";
+import { getConfig, getSnapshots, saveSnapshots } from "./store";
 import type { AccountConfig, Env, QuotaPeriod, ScriptKind, ScriptUsage, Snapshot } from "./types";
 
 /**
@@ -65,7 +65,7 @@ export async function collectAccount(env: Env, account: AccountConfig): Promise<
       fetchZones(account.apiToken, account.id),
       // Also never throws — a token missing Account Analytics: Read loses the
       // quota table but keeps Workers, Pages and domains.
-      queryQuotasSafe(account.apiToken, account.id, start, collectedAt),
+      queryQuotasSafe(account.apiToken, account.id, startOfQuotaPeriod(now, "day"), collectedAt),
       // Backfill sources for zero-usage projects; both never throw. The Pages
       // fetch used to be conditional on there being Pages traffic, but it also
       // supplies the zero-usage project names, so it now always runs.
@@ -171,6 +171,14 @@ async function queryQuotasSafe(
  */
 export async function collectAll(env: Env): Promise<Snapshot[]> {
   const config = await getConfig(env);
+  // Read before replacing the snapshots: D1 alerts need the previous collection
+  // to confirm a threshold crossing instead of trusting a single analytics spike.
+  let previous: Record<string, Snapshot> = {};
+  try {
+    previous = await getSnapshots(env);
+  } catch (err) {
+    console.error("读取前一轮快照失败,本轮 D1 告警无法确认", err);
+  }
 
   const snapshots = await Promise.all(
     config.accounts.map((account) => collectAccount(env, account)),
@@ -182,7 +190,7 @@ export async function collectAll(env: Env): Promise<Snapshot[]> {
     console.error("保存快照失败(KV 写入可能已达每日上限)", err);
   }
 
-  await evaluateAlerts(env, config, snapshots);
+  await evaluateAlerts(env, config, snapshots, previous);
   // Reads only the config, not the snapshots — a domain's expiry date is typed in
   // by hand, not measured.
   await evaluateDomainExpiry(env, config);

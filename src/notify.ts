@@ -144,7 +144,12 @@ function alertWindowStart(mode: AlertMode, cooldownMinutes: number, now: Date): 
  * per day; CPU p99 is a moving statistic, so the user picks between the same
  * daily cap and a rolling cooldown.
  */
-export async function evaluateAlerts(env: Env, config: Config, snapshots: Snapshot[]): Promise<void> {
+export async function evaluateAlerts(
+  env: Env,
+  config: Config,
+  snapshots: Snapshot[],
+  previous: Record<string, Snapshot> = {},
+): Promise<void> {
   const state = await getAlertState(env);
   const now = new Date();
   const nowSec = Math.floor(now.getTime() / 1000);
@@ -221,7 +226,7 @@ export async function evaluateAlerts(env: Env, config: Config, snapshots: Snapsh
     // 3) D1 / KV / Workers AI 的免费额度,每项一个独立阈值。
     // 传入同一份 state 就地修改,由本函数末尾统一写回 —— 不能让它自己
     // 再 get/saveAlertState,否则会用一份旧快照整体覆盖,把别的键冲掉。
-    await checkPlatformQuotas(config, account, snapshot, state, () => {
+    await checkPlatformQuotas(config, account, snapshot, previous[account.id], state, () => {
       changed = true;
     });
   }
@@ -233,6 +238,9 @@ export async function evaluateAlerts(env: Env, config: Config, snapshots: Snapsh
 
 /**
  * D1 / KV / Workers AI 免费额度告警。每项独立阈值、独立去重,**每账号每项每天最多一条**。
+ *
+ * D1 读写行数还需要前一轮有效快照在同一 UTC 日内也越线:自适应统计的单次尖峰
+ * 可能远高于真实用量,不应直接触发通知。确认只用已有快照,不追加 GraphQL 请求。
  *
  * 六项里有四项(D1 读写行数、KV 写、Neurons)在一个 UTC 天内只增不减,和 Workers 用量
  * 一样"越线就一直在线上",所以按天去重不会漏也不会重复。存储两项是 gauge,会升也会降,
@@ -250,18 +258,29 @@ async function checkPlatformQuotas(
   config: Config,
   account: AccountConfig,
   snapshot: Snapshot,
+  previous: Snapshot | undefined,
   state: AlertState,
   markChanged: () => void,
 ): Promise<void> {
   const quotas = snapshot.quotas;
-  if (!quotas) return;
+  if (!quotas || snapshot.quotasError) return;
 
   const thresholds = config.thresholds;
   const storageOn = thresholds.storageAlertsEnabled;
 
-  // 与 evaluateAlerts 一致:去重一律用「Unix 秒」。此前这里存的是毫秒级的
-  // todayUtc,和别处的秒混用,虽然各自比较不出错,但容易在后续维护里踩坑。
-  const nowSec = Math.floor(Date.now() / 1000);
+  // 与 evaluateAlerts 一致:去重一律用「Unix 秒」。
+  const now = new Date();
+  const nowSec = Math.floor(now.getTime() / 1000);
+  const dayStart = startOfUtcDaySeconds(now);
+  const currentTime = Date.parse(snapshot.collectedAt);
+  const previousTime = Date.parse(previous?.collectedAt ?? "");
+  // 不用昨天、失败、同一轮或未来的快照确认当天额度。
+  const confirmedQuotas = previous?.accountId === account.id
+    && !previous.error && !previous.quotasError
+    && previousTime >= dayStart * 1000 && previousTime < currentTime
+    && currentTime <= now.getTime()
+    ? previous.quotas
+    : null;
 
   /**
    * 每项自带阈值和它对应的键。`threshold` 直接取值而不是用字符串索引 Thresholds,
@@ -282,11 +301,18 @@ async function checkPlatformQuotas(
     if (item.isStorage && !storageOn) continue;
 
     const percent = (item.used / item.limit) * 100;
-    if (percent < item.threshold) continue;
+    if (!Number.isFinite(percent) || percent < item.threshold) continue;
+
+    const d1RowKey = item.key === "d1RowsRead" || item.key === "d1RowsWritten" ? item.key : null;
+    if (d1RowKey) {
+      const previousUsed = confirmedQuotas?.[d1RowKey];
+      if (previousUsed === undefined || !Number.isFinite(previousUsed)
+        || (previousUsed / item.limit) * 100 < item.threshold) continue;
+    }
 
     // 每账号每项每天最多一条:同一天 UTC 内已发过就跳过。
     const stateKey = `pq:${account.id}:${item.key}`;
-    if (state[stateKey] !== undefined && state[stateKey] >= startOfUtcDaySeconds()) continue;
+    if (state[stateKey] !== undefined && state[stateKey] >= dayStart) continue;
 
     const content = [
       `账号:${account.name}`,

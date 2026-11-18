@@ -609,7 +609,7 @@ function quotasSection(account) {
 
   const rows = quotaRows(account.quotas);
   return `
-    <div class="banner">${icons.alert}<span>均为 <strong>Workers 免费版</strong>额度,<strong>每日 UTC 零点</strong>重置,与上方请求数同一口径。存储类指标取账号内所有数据库/命名空间的合计。</span></div>
+    <div class="banner">${icons.alert}<span>均为 <strong>Workers 免费版</strong>额度,读写用量固定统计<strong>当日 UTC 零点至采集时刻</strong>,不受 Workers 每日/每月周期设置影响。存储类指标取账号内所有数据库/命名空间的合计,不按天清零。</span></div>
     <div class="quotas">
       ${rows.map(quotaCard).join("")}
     </div>
