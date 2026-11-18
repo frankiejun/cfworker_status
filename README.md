@@ -72,3 +72,7 @@ npm run dev        # http://localhost:8787
 npm run typecheck
 npm test           # 本地模拟，不会发送真实通知
 ```
+
+## 许可证
+
+本项目基于 MIT 许可证开源。
